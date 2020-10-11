@@ -62,7 +62,7 @@ public class XxeScanRule extends AbstractAppPlugin implements ChallengeCallbackP
                     + "  <!ENTITY zapxxe SYSTEM \"{0}\">\n"
                     + "]>\n";
 
-    private static final String ATTACK_BODY = "<foo>" + ATTACK_ENTITY + "</foo>";
+    protected static final String ATTACK_BODY = "<foo>" + ATTACK_ENTITY + "</foo>";
 
     // XML standard from W3C Consortium
     // ---------------------------------------------
@@ -238,56 +238,7 @@ public class XxeScanRule extends AbstractAppPlugin implements ChallengeCallbackP
             // or reflect and manage the sent content you can probably
             // have the file included in the HTML page and you can check it
             //
-            msg = getNewMsg();
-
-            try {
-                Matcher matcher;
-                String localFile;
-                String response;
-                String requestBody = createLfrPayload(msg.getRequestBody().toString());
-
-                for (int idx = 0; idx < LOCAL_FILE_TARGETS.length; idx++) {
-                    // Prepare the message
-                    localFile = LOCAL_FILE_TARGETS[idx];
-                    payload = MessageFormat.format(requestBody, localFile);
-                    // msg = getNewMsg();
-                    msg.setRequestBody(payload);
-
-                    // Send message with local file inclusion
-                    sendAndReceive(msg);
-
-                    // Parse the result
-                    if (msg.getResponseHeader().getStatusCode() == HttpStatusCode.OK) {
-
-                        response = msg.getResponseBody().toString();
-                        matcher = LOCAL_FILE_PATTERNS[idx].matcher(response);
-                        if (matcher.find()) {
-
-                            newAlert()
-                                    .setConfidence(Alert.CONFIDENCE_MEDIUM)
-                                    .setAttack(payload)
-                                    .setEvidence(matcher.group())
-                                    .setMessage(msg)
-                                    .raise();
-                        }
-                    }
-
-                    // Check if the scan has been stopped
-                    // if yes dispose resources and exit
-                    if (isStop()) {
-                        // Dispose all resources
-                        // Exit the rule
-                        return;
-                    }
-                }
-
-            } catch (IOException ex) {
-                log.warn(
-                        "XXE Injection vulnerability check failed for payload ["
-                                + payload
-                                + "] due to an I/O error",
-                        ex);
-            }
+            localFileReflectionAttack(getNewMsg());
 
             // Check if we've to do only medium sized analysis (only remote and reflected will be
             // done)...
@@ -304,57 +255,114 @@ public class XxeScanRule extends AbstractAppPlugin implements ChallengeCallbackP
             // only in case of a bare XML parser which execute the conetnt and then
             // gives it back almost untouched (maybe because it applies an XSLT or
             // query it using XPath and give back the result).
-            msg = getNewMsg();
+            localFileInclusionAttack(getNewMsg());
 
-            try {
-                String localFile;
-                String response;
-                Matcher matcher;
+        }
+    }
 
-                for (int idx = 0; idx < LOCAL_FILE_TARGETS.length; idx++) {
-                    // Prepare the message
-                    localFile = LOCAL_FILE_TARGETS[idx];
-                    payload = MessageFormat.format(ATTACK_HEADER + ATTACK_BODY, localFile);
-                    // msg = getNewMsg();
-                    msg.setRequestBody(payload);
+    //TODO: Add Doc Comments
+    protected void localFileReflectionAttack(HttpMessage msg) {
+        Matcher matcher;
+        String localFile;
+        String response;
+        String payload = null;
+        try {
+            String requestBody = createLfrPayload(msg.getRequestBody().toString());
 
-                    // Send message with local file inclusion
-                    sendAndReceive(msg);
+            for (int idx = 0; idx < LOCAL_FILE_TARGETS.length; idx++) {
+                // Prepare the message
+                localFile = LOCAL_FILE_TARGETS[idx];
+                payload = MessageFormat.format(requestBody, localFile);
+                // msg = getNewMsg();
+                msg.setRequestBody(payload);
 
-                    // Parse the result
-                    if (msg.getResponseHeader().getStatusCode() == HttpStatusCode.OK) {
+                // Send message with local file inclusion
+                sendAndReceive(msg);
 
-                        response = msg.getResponseBody().toString();
-                        matcher = LOCAL_FILE_PATTERNS[idx].matcher(response);
-                        if (matcher.find()) {
+                // Parse the result
 
-                            newAlert()
-                                    .setConfidence(Alert.CONFIDENCE_MEDIUM)
-                                    .setAttack(payload)
-                                    .setEvidence(matcher.group())
-                                    .setMessage(msg)
-                                    .raise();
-                        }
-                    }
 
-                    // Check if the scan has been stopped
-                    // if yes dispose resources and exit
-                    if (isStop()) {
-                        // Dispose all resources
-                        // Exit the rule
-                        return;
-                    }
+                response = msg.getResponseBody().toString();
+                matcher = LOCAL_FILE_PATTERNS[idx].matcher(response);
+                if (matcher.find()) {
+
+                    newAlert()
+                            .setConfidence(Alert.CONFIDENCE_MEDIUM)
+                            .setAttack(payload)
+                            .setEvidence(matcher.group())
+                            .setMessage(msg)
+                            .raise();
                 }
 
-            } catch (IOException ex) {
-                // Do not try to internationalise this.. we need an error message in any event..
-                // if it's in English, it's still better than not having it at all.
-                log.warn(
-                        "XXE Injection vulnerability check failed for payload ["
-                                + payload
-                                + "] due to an I/O error",
-                        ex);
+                // Check if the scan has been stopped
+                // if yes dispose resources and exit
+                if (isStop()) {
+                    // Dispose all resources
+                    // Exit the rule
+                    return;
+                }
             }
+
+        } catch (IOException ex) {
+            log.warn(
+                    "XXE Injection vulnerability check failed for payload ["
+                            + payload
+                            + "] due to an I/O error",
+                    ex);
+        }
+
+
+    }
+
+    //TODO: Add Doc Comments
+    protected void localFileInclusionAttack(HttpMessage msg) {
+        String localFile;
+        String response;
+        Matcher matcher;
+        String payload = null;
+        try {
+            for (int idx = 0; idx < LOCAL_FILE_TARGETS.length; idx++) {
+                // Prepare the message
+                localFile = LOCAL_FILE_TARGETS[idx];
+                payload = MessageFormat.format(ATTACK_HEADER + ATTACK_BODY, localFile);
+                // msg = getNewMsg();
+                msg.setRequestBody(payload);
+
+                // Send message with local file inclusion
+                sendAndReceive(msg);
+
+                // Parse the result
+
+                response = msg.getResponseBody().toString();
+                matcher = LOCAL_FILE_PATTERNS[idx].matcher(response);
+                if (matcher.find()) {
+
+                    newAlert()
+                            .setConfidence(Alert.CONFIDENCE_MEDIUM)
+                            .setAttack(payload)
+                            .setEvidence(matcher.group())
+                            .setMessage(msg)
+                            .raise();
+                }
+
+
+                // Check if the scan has been stopped
+                // if yes dispose resources and exit
+                if (isStop()) {
+                    // Dispose all resources
+                    // Exit the rule
+                    return;
+                }
+            }
+
+        } catch (IOException ex) {
+            // Do not try to internationalise this.. we need an error message in any event..
+            // if it's in English, it's still better than not having it at all.
+            log.warn(
+                    "XXE Injection vulnerability check failed for payload ["
+                            + payload
+                            + "] due to an I/O error",
+                    ex);
         }
     }
 
