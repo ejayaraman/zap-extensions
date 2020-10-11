@@ -19,15 +19,23 @@
  */
 package org.zaproxy.zap.extension.ascanrulesBeta;
 
+import static fi.iki.elonen.NanoHTTPD.newFixedLengthResponse;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
+import fi.iki.elonen.NanoHTTPD;
+import java.text.MessageFormat;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.parosproxy.paros.core.scanner.Alert;
 import org.parosproxy.paros.network.HttpMessage;
+import org.zaproxy.zap.testutils.NanoServerHandler;
 
 public class XxeScanRuleUnitTest extends ActiveScannerTest<XxeScanRule> {
 
@@ -120,5 +128,226 @@ public class XxeScanRuleUnitTest extends ActiveScannerTest<XxeScanRule> {
                         + "    </comment>\n"
                         + "</comments>";
         assertThat(payload, is(expectedPayload));
+    }
+
+    @Test
+    public void shouldScanOnlyIfRequestContentTypeIsXml() throws Exception {
+        // Given
+        String test = "/test";
+        this.nano.addHandler(
+                new NanoServerHandler(test) {
+                    @Override
+                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
+                        consumeBody(session);
+                        String response =
+                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
+                        return newFixedLengthResponse(
+                                NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, response);
+                    }
+                });
+
+        HttpMessage msg = this.getHttpMessage(test);
+        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
+        msg.getRequestHeader().setHeader("Content-Type", "application/json");
+        msg.getRequestHeader().setMethod("POST");
+        rule.init(msg, parent);
+
+        // When
+        rule.scan();
+
+        // Then
+        assertThat(countMessagesSent, equalTo(0));
+    }
+
+    @Test
+    public void shouldSendThreeMessagesForLocalFileReflectionRule() throws Exception {
+        // Given
+        String test = "/test";
+        this.nano.addHandler(
+                new NanoServerHandler(test) {
+                    @Override
+                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
+                        consumeBody(session);
+                        String response =
+                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
+                        return newFixedLengthResponse(
+                                NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, response);
+                    }
+                });
+        HttpMessage msg = this.getHttpMessage(test);
+        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
+        msg.getRequestHeader().setMethod("POST");
+        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
+        rule.init(msg, parent);
+
+        // When
+        rule.localFileReflectionAttack(msg);
+
+        // Then
+        assertThat(countMessagesSent, equalTo(3));
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = NanoHTTPD.Response.Status.class,
+            names = {"OK", "BAD_REQUEST"})
+    public void shouldAlertWhenLocalFileReflectedInResponse(NanoHTTPD.Response.Status status)
+            throws Exception {
+        // Given
+        String test = "/test";
+        this.nano.addHandler(
+                new NanoServerHandler(test) {
+                    @Override
+                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
+                        consumeBody(session);
+                        String response =
+                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
+                        return newFixedLengthResponse(status, NanoHTTPD.MIME_PLAINTEXT, response);
+                    }
+                });
+        HttpMessage msg = this.getHttpMessage(test);
+        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
+        msg.getRequestHeader().setMethod("POST");
+        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
+        parent.stop();
+        rule.init(msg, parent);
+
+        // When
+        rule.localFileReflectionAttack(msg);
+
+        // Then
+        assertThat(alertsRaised.size(), equalTo(1));
+        assertThat(alertsRaised.get(0).getEvidence(), equalTo("root:*:0:0"));
+        assertThat(
+                alertsRaised.get(0).getAttack(),
+                equalTo(
+                        MessageFormat.format(XxeScanRule.ATTACK_HEADER, "file:///etc/passwd")
+                                + "<comment><text>&zapxxe;</text></comment>"));
+        assertThat(alertsRaised.get(0).getRisk(), equalTo(Alert.RISK_HIGH));
+        assertThat(alertsRaised.get(0).getConfidence(), equalTo(Alert.CONFIDENCE_MEDIUM));
+    }
+
+    @Test
+    public void shouldStopLocalFileReflectionRuleIfScanIsStopped() throws Exception {
+        // Given
+        String test = "/test";
+        this.nano.addHandler(
+                new NanoServerHandler(test) {
+                    @Override
+                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
+                        consumeBody(session);
+                        String response =
+                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
+                        return newFixedLengthResponse(
+                                NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, response);
+                    }
+                });
+        HttpMessage msg = this.getHttpMessage(test);
+        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
+        msg.getRequestHeader().setMethod("POST");
+        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
+        parent.stop();
+        rule.init(msg, parent);
+
+        // When
+        rule.localFileReflectionAttack(msg);
+
+        // Then
+        assertThat(countMessagesSent, equalTo(1));
+    }
+
+    @Test
+    public void shouldSendThreeMessagesForLocalFileInclusionRule() throws Exception {
+        // Given
+        String test = "/test";
+        this.nano.addHandler(
+                new NanoServerHandler(test) {
+                    @Override
+                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
+                        consumeBody(session);
+                        String response =
+                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
+                        return newFixedLengthResponse(
+                                NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, response);
+                    }
+                });
+        HttpMessage msg = this.getHttpMessage(test);
+        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
+        msg.getRequestHeader().setMethod("POST");
+        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
+        rule.init(msg, parent);
+
+        // When
+        rule.localFileInclusionAttack(msg);
+
+        // Then
+        assertThat(countMessagesSent, equalTo(3));
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = NanoHTTPD.Response.Status.class,
+            names = {"OK", "BAD_REQUEST"})
+    public void shouldAlertWhenLocalFileIncludedInResponse(NanoHTTPD.Response.Status status)
+            throws Exception {
+        // Given
+        String test = "/test";
+        this.nano.addHandler(
+                new NanoServerHandler(test) {
+                    @Override
+                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
+                        consumeBody(session);
+                        String response = "root:*:0:0:System Administrator:/var/root:/bin/sh";
+                        return newFixedLengthResponse(status, NanoHTTPD.MIME_PLAINTEXT, response);
+                    }
+                });
+        HttpMessage msg = this.getHttpMessage(test);
+        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
+        msg.getRequestHeader().setMethod("POST");
+        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
+        rule.init(msg, parent);
+
+        // When
+        rule.localFileInclusionAttack(msg);
+
+        // Then
+        assertThat(alertsRaised.size(), equalTo(1));
+        assertThat(alertsRaised.get(0).getEvidence(), equalTo("root:*:0:0"));
+        assertThat(
+                alertsRaised.get(0).getAttack(),
+                equalTo(
+                        MessageFormat.format(XxeScanRule.ATTACK_HEADER, "file:///etc/passwd")
+                                + XxeScanRule.ATTACK_BODY));
+        assertThat(alertsRaised.get(0).getRisk(), equalTo(Alert.RISK_HIGH));
+        assertThat(alertsRaised.get(0).getConfidence(), equalTo(Alert.CONFIDENCE_MEDIUM));
+    }
+
+    @Test
+    public void shouldStopLocalFileInclusionRuleIfScanIsStopped() throws Exception {
+        // Given
+        String test = "/test";
+        this.nano.addHandler(
+                new NanoServerHandler(test) {
+                    @Override
+                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
+                        consumeBody(session);
+                        String response =
+                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
+                        return newFixedLengthResponse(
+                                NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, response);
+                    }
+                });
+        HttpMessage msg = this.getHttpMessage(test);
+        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
+        msg.getRequestHeader().setMethod("POST");
+        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
+        parent.stop();
+        rule.init(msg, parent);
+
+        // When
+        rule.localFileInclusionAttack(msg);
+
+        // Then
+        assertThat(countMessagesSent, equalTo(1));
     }
 }

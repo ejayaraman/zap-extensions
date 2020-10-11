@@ -31,7 +31,6 @@ import org.parosproxy.paros.core.scanner.Alert;
 import org.parosproxy.paros.core.scanner.Category;
 import org.parosproxy.paros.network.HttpHeader;
 import org.parosproxy.paros.network.HttpMessage;
-import org.parosproxy.paros.network.HttpStatusCode;
 import org.zaproxy.zap.extension.callback.ExtensionCallback;
 import org.zaproxy.zap.model.Vulnerabilities;
 import org.zaproxy.zap.model.Vulnerability;
@@ -256,11 +255,10 @@ public class XxeScanRule extends AbstractAppPlugin implements ChallengeCallbackP
             // gives it back almost untouched (maybe because it applies an XSLT or
             // query it using XPath and give back the result).
             localFileInclusionAttack(getNewMsg());
-
         }
     }
 
-    //TODO: Add Doc Comments
+    // TODO: Add Doc Comments
     protected void localFileReflectionAttack(HttpMessage msg) {
         Matcher matcher;
         String localFile;
@@ -280,7 +278,6 @@ public class XxeScanRule extends AbstractAppPlugin implements ChallengeCallbackP
                 sendAndReceive(msg);
 
                 // Parse the result
-
 
                 response = msg.getResponseBody().toString();
                 matcher = LOCAL_FILE_PATTERNS[idx].matcher(response);
@@ -310,11 +307,9 @@ public class XxeScanRule extends AbstractAppPlugin implements ChallengeCallbackP
                             + "] due to an I/O error",
                     ex);
         }
-
-
     }
 
-    //TODO: Add Doc Comments
+    // TODO: Add Doc Comments
     protected void localFileInclusionAttack(HttpMessage msg) {
         String localFile;
         String response;
@@ -344,7 +339,6 @@ public class XxeScanRule extends AbstractAppPlugin implements ChallengeCallbackP
                             .setMessage(msg)
                             .raise();
                 }
-
 
                 // Check if the scan has been stopped
                 // if yes dispose resources and exit
