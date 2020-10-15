@@ -4,6 +4,7 @@ All notable changes to this add-on will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
+ - XML External Entity Attack scan rule updated to parse response body irrespective of the HTTP response status code. (Issue 6203) 
 
 ### Fixed
  - Terminology

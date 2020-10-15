@@ -21,19 +21,19 @@ package org.zaproxy.zap.extension.ascanrulesBeta;
 
 import static fi.iki.elonen.NanoHTTPD.newFixedLengthResponse;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.is;
-import static org.mockito.Mockito.anyString;
-import static org.mockito.Mockito.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
+import static org.hamcrest.Matchers.*;
 
 import fi.iki.elonen.NanoHTTPD;
+import fi.iki.elonen.NanoHTTPD.Response.IStatus;
 import java.text.MessageFormat;
+import java.util.List;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.parosproxy.paros.core.scanner.Alert;
+import org.parosproxy.paros.core.scanner.Plugin;
+import org.parosproxy.paros.network.HttpMalformedHeaderException;
 import org.parosproxy.paros.network.HttpMessage;
 import org.zaproxy.zap.testutils.NanoServerHandler;
 
@@ -42,16 +42,6 @@ public class XxeScanRuleUnitTest extends ActiveScannerTest<XxeScanRule> {
     @Override
     protected XxeScanRule createScanner() {
         return new XxeScanRule();
-    }
-
-    @Test
-    public void shouldSkipScanRuleIfExtensionCallbackIsNotEnabled() {
-        // Given
-        HttpMessage message = mock(HttpMessage.class);
-        // When
-        rule.init(message, parent);
-        // Then
-        verify(parent).pluginSkipped(eq(rule), anyString());
     }
 
     @Test
@@ -131,60 +121,21 @@ public class XxeScanRuleUnitTest extends ActiveScannerTest<XxeScanRule> {
     }
 
     @Test
-    public void shouldScanOnlyIfRequestContentTypeIsXml() throws Exception {
+    public void shouldScanOnlyIfRequestContentTypeIsXml() throws HttpMalformedHeaderException {
         // Given
-        String test = "/test";
-        this.nano.addHandler(
-                new NanoServerHandler(test) {
-                    @Override
-                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
-                        consumeBody(session);
-                        String response =
-                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
-                        return newFixedLengthResponse(
-                                NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, response);
-                    }
-                });
-
-        HttpMessage msg = this.getHttpMessage(test);
-        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
+        HttpMessage msg = this.getHttpMessage("/test");
         msg.getRequestHeader().setHeader("Content-Type", "application/json");
+        // The mismatch in request body and content-type is intentional.
+        // For any reason if the rule fails to check the Content-Type, then createLfrPayload() will
+        // send a message converting the XML body into an attack payload.
+        // This may not happen, if the request body is not XML.
+        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
         msg.getRequestHeader().setMethod("POST");
         rule.init(msg, parent);
-
         // When
         rule.scan();
-
         // Then
         assertThat(countMessagesSent, equalTo(0));
-    }
-
-    @Test
-    public void shouldSendThreeMessagesForLocalFileReflectionRule() throws Exception {
-        // Given
-        String test = "/test";
-        this.nano.addHandler(
-                new NanoServerHandler(test) {
-                    @Override
-                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
-                        consumeBody(session);
-                        String response =
-                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
-                        return newFixedLengthResponse(
-                                NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, response);
-                    }
-                });
-        HttpMessage msg = this.getHttpMessage(test);
-        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
-        msg.getRequestHeader().setMethod("POST");
-        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
-        rule.init(msg, parent);
-
-        // When
-        rule.localFileReflectionAttack(msg);
-
-        // Then
-        assertThat(countMessagesSent, equalTo(3));
     }
 
     @ParameterizedTest
@@ -192,96 +143,28 @@ public class XxeScanRuleUnitTest extends ActiveScannerTest<XxeScanRule> {
             value = NanoHTTPD.Response.Status.class,
             names = {"OK", "BAD_REQUEST"})
     public void shouldAlertWhenLocalFileReflectedInResponse(NanoHTTPD.Response.Status status)
-            throws Exception {
+            throws HttpMalformedHeaderException {
         // Given
         String test = "/test";
-        this.nano.addHandler(
-                new NanoServerHandler(test) {
-                    @Override
-                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
-                        consumeBody(session);
-                        String response =
-                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
-                        return newFixedLengthResponse(status, NanoHTTPD.MIME_PLAINTEXT, response);
-                    }
-                });
-        HttpMessage msg = this.getHttpMessage(test);
-        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
-        msg.getRequestHeader().setMethod("POST");
-        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
-        parent.stop();
+        String responseBody = "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
+        this.nano.addHandler(createNanoHandler(test, status, responseBody));
+        HttpMessage msg = getXmlPostMessage(test);
         rule.init(msg, parent);
-
         // When
-        rule.localFileReflectionAttack(msg);
-
+        rule.scan();
         // Then
-        assertThat(alertsRaised.size(), equalTo(1));
-        assertThat(alertsRaised.get(0).getEvidence(), equalTo("root:*:0:0"));
-        assertThat(
-                alertsRaised.get(0).getAttack(),
-                equalTo(
-                        MessageFormat.format(XxeScanRule.ATTACK_HEADER, "file:///etc/passwd")
-                                + "<comment><text>&zapxxe;</text></comment>"));
-        assertThat(alertsRaised.get(0).getRisk(), equalTo(Alert.RISK_HIGH));
-        assertThat(alertsRaised.get(0).getConfidence(), equalTo(Alert.CONFIDENCE_MEDIUM));
-    }
-
-    @Test
-    public void shouldStopLocalFileReflectionRuleIfScanIsStopped() throws Exception {
-        // Given
-        String test = "/test";
-        this.nano.addHandler(
-                new NanoServerHandler(test) {
-                    @Override
-                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
-                        consumeBody(session);
-                        String response =
-                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
-                        return newFixedLengthResponse(
-                                NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, response);
-                    }
-                });
-        HttpMessage msg = this.getHttpMessage(test);
-        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
-        msg.getRequestHeader().setMethod("POST");
-        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
-        parent.stop();
-        rule.init(msg, parent);
-
-        // When
-        rule.localFileReflectionAttack(msg);
-
-        // Then
-        assertThat(countMessagesSent, equalTo(1));
-    }
-
-    @Test
-    public void shouldSendThreeMessagesForLocalFileInclusionRule() throws Exception {
-        // Given
-        String test = "/test";
-        this.nano.addHandler(
-                new NanoServerHandler(test) {
-                    @Override
-                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
-                        consumeBody(session);
-                        String response =
-                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
-                        return newFixedLengthResponse(
-                                NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, response);
-                    }
-                });
-        HttpMessage msg = this.getHttpMessage(test);
-        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
-        msg.getRequestHeader().setMethod("POST");
-        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
-        rule.init(msg, parent);
-
-        // When
-        rule.localFileInclusionAttack(msg);
-
-        // Then
-        assertThat(countMessagesSent, equalTo(3));
+        String localFileInclusionAttackPayload =
+                MessageFormat.format(XxeScanRule.ATTACK_HEADER, "file:///etc/passwd")
+                        + "<comment><text>&zapxxe;</text></comment>";
+        List<Alert> alertList =
+                alertsRaised.stream()
+                        .filter(alert -> alert.getAttack().equals(localFileInclusionAttackPayload))
+                        .collect(Collectors.toList());
+        assertThat(alertList.size(), equalTo(1));
+        Alert alert = alertList.get(0);
+        assertThat(alert.getEvidence(), equalTo("root:*:0:0"));
+        assertThat(alert.getRisk(), equalTo(Alert.RISK_HIGH));
+        assertThat(alert.getConfidence(), equalTo(Alert.CONFIDENCE_MEDIUM));
     }
 
     @ParameterizedTest
@@ -289,65 +172,60 @@ public class XxeScanRuleUnitTest extends ActiveScannerTest<XxeScanRule> {
             value = NanoHTTPD.Response.Status.class,
             names = {"OK", "BAD_REQUEST"})
     public void shouldAlertWhenLocalFileIncludedInResponse(NanoHTTPD.Response.Status status)
-            throws Exception {
+            throws HttpMalformedHeaderException {
         // Given
         String test = "/test";
-        this.nano.addHandler(
-                new NanoServerHandler(test) {
-                    @Override
-                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
-                        consumeBody(session);
-                        String response = "root:*:0:0:System Administrator:/var/root:/bin/sh";
-                        return newFixedLengthResponse(status, NanoHTTPD.MIME_PLAINTEXT, response);
-                    }
-                });
-        HttpMessage msg = this.getHttpMessage(test);
-        msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
-        msg.getRequestHeader().setMethod("POST");
-        msg.getRequestHeader().setHeader("Content-Type", "application/xml");
+        String responseBody = "[drivers]\n" + "wave=mmdrv.dll";
+        this.nano.addHandler(createNanoHandler(test, status, responseBody));
+        HttpMessage msg = getXmlPostMessage(test);
         rule.init(msg, parent);
-
         // When
-        rule.localFileInclusionAttack(msg);
-
+        // Local File Inclusion Attacks is triggered only when AttackStrength is > Medium
+        rule.setAttackStrength(Plugin.AttackStrength.HIGH);
+        rule.scan();
         // Then
-        assertThat(alertsRaised.size(), equalTo(1));
-        assertThat(alertsRaised.get(0).getEvidence(), equalTo("root:*:0:0"));
-        assertThat(
-                alertsRaised.get(0).getAttack(),
-                equalTo(
-                        MessageFormat.format(XxeScanRule.ATTACK_HEADER, "file:///etc/passwd")
-                                + XxeScanRule.ATTACK_BODY));
-        assertThat(alertsRaised.get(0).getRisk(), equalTo(Alert.RISK_HIGH));
-        assertThat(alertsRaised.get(0).getConfidence(), equalTo(Alert.CONFIDENCE_MEDIUM));
+        String localFileInclusionAttackPayload =
+                MessageFormat.format(XxeScanRule.ATTACK_HEADER, "file:///c:/Windows/system.ini")
+                        + XxeScanRule.ATTACK_BODY;
+        List<Alert> alertList =
+                alertsRaised.stream()
+                        .filter(alert -> alert.getAttack().equals(localFileInclusionAttackPayload))
+                        .collect(Collectors.toList());
+        assertThat(alertList.size(), equalTo(1));
+        Alert alert = alertList.get(0);
+        assertThat(alert.getEvidence(), equalTo("[drivers]"));
+        assertThat(alert.getRisk(), equalTo(Alert.RISK_HIGH));
+        assertThat(alert.getConfidence(), equalTo(Alert.CONFIDENCE_MEDIUM));
     }
 
     @Test
-    public void shouldStopLocalFileInclusionRuleIfScanIsStopped() throws Exception {
+    public void shouldStopScanIfScanIsStopped() throws HttpMalformedHeaderException {
         // Given
-        String test = "/test";
-        this.nano.addHandler(
-                new NanoServerHandler(test) {
-                    @Override
-                    protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
-                        consumeBody(session);
-                        String response =
-                                "<foo>root:*:0:0:System Administrator:/var/root:/bin/sh</foo>";
-                        return newFixedLengthResponse(
-                                NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, response);
-                    }
-                });
-        HttpMessage msg = this.getHttpMessage(test);
+        HttpMessage msg = getXmlPostMessage("/test");
+        parent.stop();
+        rule.setAttackStrength(Plugin.AttackStrength.HIGH);
+        rule.init(msg, parent);
+        // When
+        rule.scan();
+        // Then
+        assertThat(countMessagesSent, equalTo(1));
+    }
+
+    private NanoServerHandler createNanoHandler(String path, IStatus status, String responseBody) {
+        return new NanoServerHandler(path) {
+            @Override
+            protected NanoHTTPD.Response serve(NanoHTTPD.IHTTPSession session) {
+                consumeBody(session);
+                return newFixedLengthResponse(status, NanoHTTPD.MIME_PLAINTEXT, responseBody);
+            }
+        };
+    }
+
+    private HttpMessage getXmlPostMessage(String path) throws HttpMalformedHeaderException {
+        HttpMessage msg = this.getHttpMessage(path);
         msg.setRequestBody("<?xml version=\"1.0\"?><comment><text>test</text></comment>");
         msg.getRequestHeader().setMethod("POST");
         msg.getRequestHeader().setHeader("Content-Type", "application/xml");
-        parent.stop();
-        rule.init(msg, parent);
-
-        // When
-        rule.localFileInclusionAttack(msg);
-
-        // Then
-        assertThat(countMessagesSent, equalTo(1));
+        return msg;
     }
 }
