@@ -266,7 +266,6 @@ public class XxeScanRule extends AbstractAppPlugin implements ChallengeCallbackP
                 String response = msg.getResponseBody().toString();
                 Matcher matcher = LOCAL_FILE_PATTERNS[idx].matcher(response);
                 if (matcher.find()) {
-
                     newAlert()
                             .setConfidence(Alert.CONFIDENCE_MEDIUM)
                             .setAttack(payload)
@@ -312,7 +311,6 @@ public class XxeScanRule extends AbstractAppPlugin implements ChallengeCallbackP
                 String response = msg.getResponseBody().toString();
                 Matcher matcher = LOCAL_FILE_PATTERNS[idx].matcher(response);
                 if (matcher.find()) {
-
                     newAlert()
                             .setConfidence(Alert.CONFIDENCE_MEDIUM)
                             .setAttack(payload)
